@@ -1,0 +1,9 @@
+# Danh sách URL vendor chính thống để nạp làm nguồn trích dẫn
+urls:
+  - https://reactnative.dev/docs/getting-started
+  - https://reactnative.dev/docs/components-and-apis
+  - https://react.dev/learn
+  - https://docs.expo.dev/get-started/installation/
+  - https://reactnavigation.org/docs/getting-started
+  - https://redux-toolkit.js.org/introduction/getting-started
+  - https://www.typescriptlang.org/docs/handbook/intro.html
