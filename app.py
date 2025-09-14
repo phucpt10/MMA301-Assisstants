@@ -1,4 +1,5 @@
 import os
+import requests  # để bắt lỗi timeout rõ ràng
 import streamlit as st
 from rag import RAGIndex
 from models import LLMProvider
@@ -18,7 +19,7 @@ with st.sidebar:
     top_k = st.slider("Số đoạn trích dẫn (k)", 1, 8, 4)
     temperature = st.slider("Nhiệt độ (creativity)", 0.0, 1.0, 0.3)
 
-    # Nút test + placeholder để hiển thị kết quả trong sidebar
+    # Nút test + placeholder hiển thị kết quả
     test_clicked = st.button("🧪 Test kết nối LLM")
     ping_placeholder = st.empty()
 
@@ -55,25 +56,21 @@ if "llm" not in st.session_state:
     with st.spinner("Đang khởi tạo mô hình..."):
         st.session_state.llm = load_llm(provider)
 
-# Test ping (an toàn, ép kiểu chuỗi, hiển thị trong placeholder)
+# Test ping
 if test_clicked:
     try:
         if hasattr(st.session_state.llm, "ping"):
             with st.spinner("Đang kiểm tra kết nối LLM..."):
                 result = st.session_state.llm.ping()
         else:
-            result = "❌ ping() chưa được cài trong models.py — vui lòng cập nhật models.py theo hướng dẫn."
+            result = "❌ ping() chưa được cài trong models.py — vui lòng cập nhật models.py."
     except Exception as e:
-        msg = f"❌ Ping exception: {e}"
-        ping_placeholder.error(msg)
+        ping_placeholder.error(f"❌ Ping exception: {e}")
     else:
-        msg = str(result)  # luôn chuyển thành chuỗi để tránh lỗi render
-        if msg.startswith("✅"):
-            ping_placeholder.success(msg)
-        else:
-            ping_placeholder.error(msg)
+        msg = str(result)
+        (ping_placeholder.success if msg.startswith("✅") else ping_placeholder.error)(msg)
 
-# Optional: upload tài liệu bổ sung ngay trong app
+# Upload tài liệu
 uploaded_files = st.file_uploader(
     "Tải thêm tài liệu (.md/.txt/.pdf) để tăng chất lượng trả lời",
     type=["md", "txt", "pdf"], accept_multiple_files=True
@@ -89,7 +86,7 @@ if use_vendor_docs:
     col1, col2 = st.columns([1,1])
     with col1:
         if st.button("🔄 Sync nguồn vendor"):
-            st.cache_data.clear()  # làm mới cache vendor docs
+            st.cache_data.clear()
             st.experimental_rerun()
     with col2:
         st.caption("Sửa URLs trong sources.yaml nếu muốn bổ sung/giảm bớt nguồn.")
@@ -105,7 +102,7 @@ if use_vendor_docs and vendor_docs:
 if not use_local_docs:
     st.session_state.index.disable_local_docs()
 
-# Hiển thị lịch sử chat + trích dẫn
+# Lịch sử chat + trích dẫn
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
@@ -134,18 +131,27 @@ if question:
             if use_rag:
                 retrieved = st.session_state.index.search(question, top_k=top_k)
                 context = format_context(retrieved) if retrieved else ""
-            answer = st.session_state.llm.generate_answer(
-                question=question,
-                context=context,
-                system_prompt=SYSTEM_PROMPT,
-                temperature=temperature
-            )
-            st.markdown(answer)
-            citations = [{"source": r["source"], "score": r["score"]} for r in retrieved] if retrieved else []
-            if citations:
-                with st.expander("Nguồn trích dẫn"):
-                    for c in citations:
-                        st.write(f"- {c['source']} (score: {c['score']:.3f})")
+            try:
+                answer = st.session_state.llm.generate_answer(
+                    question=question,
+                    context=context,
+                    system_prompt=SYSTEM_PROMPT,
+                    temperature=temperature
+                )
+                st.markdown(answer)
+                citations = [{"source": r["source"], "score": r["score"]} for r in retrieved] if retrieved else []
+                if citations:
+                    with st.expander("Nguồn trích dẫn"):
+                        for c in citations:
+                            st.write(f"- {c['source']} (score: {c['score']:.3f})")
+            except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectTimeout) as e:
+                st.error("LLM timeout. Thử giảm 'Số đoạn trích dẫn (k)', hoặc hỏi ngắn hơn. Bạn cũng có thể tăng timeout bằng cách đặt GITHUB_MODELS_TIMEOUT_READ trong Secrets (ví dụ 180).")
+                st.caption(f"Chi tiết: {e}")
+                answer, citations = "Xin lỗi, yêu cầu mất quá lâu để xử lý. Vui lòng thử lại.", []
+            except Exception as e:
+                st.error("Có lỗi khi gọi mô hình. Xem Logs để biết chi tiết.")
+                st.caption(f"Chi tiết: {e}")
+                answer, citations = "Xin lỗi, tôi không thể trả lời lúc này.", []
     st.session_state.messages.append({
         "role": "assistant",
         "content": answer,
