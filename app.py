@@ -11,8 +11,26 @@ st.set_page_config(page_title="React Native Course Assistant", page_icon="📱",
 # Sidebar
 with st.sidebar:
     st.title("⚙️ Cấu hình")
-    provider = os.getenv("PROVIDER", "github").lower()
-    provider = st.selectbox("Provider", ["github", "google"], index=0 if provider=="github" else 1)
+
+    # Mật khẩu lớp (nếu APP_PASSWORD có trong Secrets)
+    APP_PASSWORD = os.getenv("APP_PASSWORD")
+    pw = None
+    if APP_PASSWORD:
+        pw = st.text_input("Password", type="password", help="Nhập mật khẩu lớp để truy cập.")
+
+    # Provider
+    provider_env = os.getenv("PROVIDER", "github").lower()
+    provider = st.selectbox("Provider", ["github", "google"], index=0 if provider_env == "github" else 1)
+
+    # Chọn model ngay trên UI (tùy provider)
+    gh_default_model = os.getenv("GITHUB_MODELS_MODEL", "gpt-4o-mini")
+    gg_default_model = os.getenv("GOOGLE_MODEL", "gemini-1.5-pro")
+    if provider == "github":
+        model_name = st.text_input("Model (GitHub Models)", gh_default_model, help="Ví dụ: gpt-4o-mini, gpt-4o")
+    else:
+        model_name = st.text_input("Model (Gemini)", gg_default_model, help="Ví dụ: gemini-1.5-pro, gemini-1.5-flash")
+
+    # Tùy chọn RAG và tham số
     use_rag = st.checkbox("Dùng RAG (trích tài liệu)", value=True)
     use_local_docs = st.checkbox("Dùng tài liệu nội bộ (data/)", value=True)
     use_vendor_docs = st.checkbox("Dùng nguồn vendor (sources.yaml)", value=True)
@@ -26,6 +44,11 @@ with st.sidebar:
     st.markdown("---")
     st.caption("Quản lý API keys trong Streamlit Secrets. Không commit secrets lên GitHub.")
 
+# Chặn truy cập nếu có mật khẩu nhưng chưa nhập đúng
+if APP_PASSWORD and (pw or "") != APP_PASSWORD:
+    st.info("Ứng dụng yêu cầu mật khẩu lớp. Vui lòng nhập ở sidebar.")
+    st.stop()
+
 # Cache resources
 @st.cache_resource(show_spinner=True)
 def load_index():
@@ -34,8 +57,13 @@ def load_index():
     return idx
 
 @st.cache_resource(show_spinner=True)
-def load_llm(provider_choice: str):
+def load_llm(provider_choice: str, ui_model: str):
+    # Áp dụng lựa chọn từ UI vào env trước khi khởi tạo LLM
     os.environ["PROVIDER"] = provider_choice
+    if provider_choice == "github":
+        os.environ["GITHUB_MODELS_MODEL"] = ui_model
+    else:
+        os.environ["GOOGLE_MODEL"] = ui_model
     return LLMProvider.from_env()
 
 @st.cache_data(show_spinner=True, ttl=60*60*12)  # cache 12h
@@ -52,9 +80,18 @@ if "messages" not in st.session_state:
 if "index" not in st.session_state:
     with st.spinner("Đang nạp tài liệu nội bộ và xây dựng chỉ mục..."):
         st.session_state.index = load_index()
-if "llm" not in st.session_state:
+
+# Khởi tạo hoặc reload LLM khi đổi provider/model
+need_reload_llm = (
+    ("llm" not in st.session_state) or
+    (st.session_state.get("llm_provider") != provider) or
+    (st.session_state.get("llm_model") != model_name)
+)
+if need_reload_llm:
     with st.spinner("Đang khởi tạo mô hình..."):
-        st.session_state.llm = load_llm(provider)
+        st.session_state.llm = load_llm(provider, model_name)
+    st.session_state.llm_provider = provider
+    st.session_state.llm_model = model_name
 
 # Test ping
 if test_clicked:
@@ -70,7 +107,7 @@ if test_clicked:
         msg = str(result)
         (ping_placeholder.success if msg.startswith("✅") else ping_placeholder.error)(msg)
 
-# Upload tài liệu
+# Optional: upload tài liệu bổ sung ngay trong app
 uploaded_files = st.file_uploader(
     "Tải thêm tài liệu (.md/.txt/.pdf) để tăng chất lượng trả lời",
     type=["md", "txt", "pdf"], accept_multiple_files=True
@@ -86,7 +123,7 @@ if use_vendor_docs:
     col1, col2 = st.columns([1,1])
     with col1:
         if st.button("🔄 Sync nguồn vendor"):
-            st.cache_data.clear()
+            st.cache_data.clear()  # làm mới cache vendor docs
             st.experimental_rerun()
     with col2:
         st.caption("Sửa URLs trong sources.yaml nếu muốn bổ sung/giảm bớt nguồn.")
@@ -102,7 +139,7 @@ if use_vendor_docs and vendor_docs:
 if not use_local_docs:
     st.session_state.index.disable_local_docs()
 
-# Lịch sử chat + trích dẫn
+# Hiển thị lịch sử chat + trích dẫn
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
