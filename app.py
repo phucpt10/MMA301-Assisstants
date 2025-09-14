@@ -11,15 +11,16 @@ st.set_page_config(page_title="React Native Course Assistant", page_icon="📱",
 with st.sidebar:
     st.title("⚙️ Cấu hình")
     provider = os.getenv("PROVIDER", "github").lower()
-    provider = st.selectbox("Provider", ["github", "google"], index=0 if provider == "github" else 1)
+    provider = st.selectbox("Provider", ["github", "google"], index=0 if provider=="github" else 1)
     use_rag = st.checkbox("Dùng RAG (trích tài liệu)", value=True)
     use_local_docs = st.checkbox("Dùng tài liệu nội bộ (data/)", value=True)
     use_vendor_docs = st.checkbox("Dùng nguồn vendor (sources.yaml)", value=True)
     top_k = st.slider("Số đoạn trích dẫn (k)", 1, 8, 4)
     temperature = st.slider("Nhiệt độ (creativity)", 0.0, 1.0, 0.3)
 
-    # Nút test kết nối LLM (bổ sung)
+    # Nút test + placeholder để hiển thị kết quả trong sidebar
     test_clicked = st.button("🧪 Test kết nối LLM")
+    ping_placeholder = st.empty()
 
     st.markdown("---")
     st.caption("Quản lý API keys trong Streamlit Secrets. Không commit secrets lên GitHub.")
@@ -36,7 +37,7 @@ def load_llm(provider_choice: str):
     os.environ["PROVIDER"] = provider_choice
     return LLMProvider.from_env()
 
-@st.cache_data(show_spinner=True, ttl=60 * 60 * 12)  # cache 12h
+@st.cache_data(show_spinner=True, ttl=60*60*12)  # cache 12h
 def get_vendor_docs():
     urls = load_vendor_urls("sources.yaml")
     return fetch_vendor_docs(urls)
@@ -54,17 +55,28 @@ if "llm" not in st.session_state:
     with st.spinner("Đang khởi tạo mô hình..."):
         st.session_state.llm = load_llm(provider)
 
-# Chạy test ping sau khi đã khởi tạo LLM (bổ sung)
-if "llm" in st.session_state and test_clicked:
-    with st.spinner("Đang kiểm tra kết nối LLM..."):
-        result = st.session_state.llm.ping()
-    st.sidebar.success(result) if result.startswith("✅") else st.sidebar.error(result)
+# Test ping (an toàn, ép kiểu chuỗi, hiển thị trong placeholder)
+if test_clicked:
+    try:
+        if hasattr(st.session_state.llm, "ping"):
+            with st.spinner("Đang kiểm tra kết nối LLM..."):
+                result = st.session_state.llm.ping()
+        else:
+            result = "❌ ping() chưa được cài trong models.py — vui lòng cập nhật models.py theo hướng dẫn."
+    except Exception as e:
+        msg = f"❌ Ping exception: {e}"
+        ping_placeholder.error(msg)
+    else:
+        msg = str(result)  # luôn chuyển thành chuỗi để tránh lỗi render
+        if msg.startswith("✅"):
+            ping_placeholder.success(msg)
+        else:
+            ping_placeholder.error(msg)
 
 # Optional: upload tài liệu bổ sung ngay trong app
 uploaded_files = st.file_uploader(
     "Tải thêm tài liệu (.md/.txt/.pdf) để tăng chất lượng trả lời",
-    type=["md", "txt", "pdf"],
-    accept_multiple_files=True,
+    type=["md", "txt", "pdf"], accept_multiple_files=True
 )
 if uploaded_files:
     added = st.session_state.index.add_uploaded_files(uploaded_files)
@@ -74,7 +86,7 @@ if uploaded_files:
 # Vendor sync
 vendor_docs = []
 if use_vendor_docs:
-    col1, col2 = st.columns([1, 1])
+    col1, col2 = st.columns([1,1])
     with col1:
         if st.button("🔄 Sync nguồn vendor"):
             st.cache_data.clear()  # làm mới cache vendor docs
@@ -126,7 +138,7 @@ if question:
                 question=question,
                 context=context,
                 system_prompt=SYSTEM_PROMPT,
-                temperature=temperature,
+                temperature=temperature
             )
             st.markdown(answer)
             citations = [{"source": r["source"], "score": r["score"]} for r in retrieved] if retrieved else []
@@ -134,10 +146,8 @@ if question:
                 with st.expander("Nguồn trích dẫn"):
                     for c in citations:
                         st.write(f"- {c['source']} (score: {c['score']:.3f})")
-    st.session_state.messages.append(
-        {
-            "role": "assistant",
-            "content": answer,
-            "citations": citations if use_rag else [],
-        }
-    )
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": answer,
+        "citations": citations if use_rag else []
+    })
